@@ -9,12 +9,15 @@ class Reverse:
 
     def __next__(self):
         if self.index == 0:
+            # self.index = len(self.data) 观察有没有这句代码对第二个for循环输出结果的影响
             raise StopIteration
         self.index = self.index - 1
         return self.data[self.index]
 
 rev = Reverse('spam')
 print(iter(rev)==rev.__iter__())
+for char in rev:
+    print(char)
 for char in rev:
     print(char)
 # If the class defines __next__(), then __iter__() can just return self
@@ -24,6 +27,8 @@ for char in rev:
 The for statement calls iter(rev),
 then the function returns an iterator object that defines the method __next__(),
 in this case, the iterator object is rev itself.
+When there are no more elements, 
+__next__() raises a StopIteration exception which tells the for loop to terminate.
 """
 def reverse(data):
     for index in range(len(data)-1, -1, -1):
