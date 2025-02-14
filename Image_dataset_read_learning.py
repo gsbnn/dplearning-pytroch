@@ -79,6 +79,10 @@ if __name__ == '__main__':
     print(train_data[0].shape, train_data[1].shape)
     train_data_dim = train_data[0].reshape(-1, train_data[0].shape[2]**2) # reshape机制？
     print(train_data_dim.shape)
+    for a, b in train_iter:
+        print(a)
+        print(b)
+        break
 
 
 #for X, y in train_iter:
