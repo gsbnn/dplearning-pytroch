@@ -24,14 +24,15 @@ $$
 4.损失函数采用交叉熵损失，具体推导如下所示  
 
 a.对数似然  
-假设整个数据集$\bold{\{X, Y\}}$具有$n$个样本，其中第$i$个样本由特征向量$\bold x^{(i)}$和独热标签向量$\bold y^{(i)}$组成。那么假设某次试验的结果为$\{\bold x^{(i)}, \bold y^{(i)}\}$，则其发生的概率可以表示为：     
+假设整个数据集$\bold{\{X, Y\}}$具有$n$个样本，其中第$i$个样本由特征向量$\bold x^{(i)}$和独热标签向量$\bold y^{(i)}$组成。那么假设某次样本为$\{\bold x^{(i)}, \bold y^{(i)}\}$，则**给定输入**$\bold x^{(i)}$**可判断**$\bold y^{(i)}$**等于当前值的条件概率**可以表示为：     
 $$
-P(\bold y^{(i)}\mid\bold x^{(i)})=P_1^{y_1}P_2^{y_2}\cdots P_q^{y_q}=\prod_{j=1}^qP_j^{y_j}\text{，其中 }P_1,P_2,\dots,P_q为\bold y^{(i)}中每个元素的发生概率。
+P(\bold y^{(i)}\mid\bold x^{(i)})=P_1^{y_1}P_2^{y_2}\cdots P_q^{y_q}=\prod_{j=1}^qP_j^{y_j}\text{，其中 }P_j=P_j(\bold x^{(i)},\theta_j)。
 $$  
-根据极大似然估计法调整参数$P_1,P_2,\dots,P_q$应使得上述概率最大，而参数$P_1,P_2,\dots,P_q$我们用预测值$\bold{\hat y}^{(i)}$代替，因此：  
+根据极大似然估计法调整参数$\theta_j$应使得上述概率最大，我们用预测值$\hat y_j(\bold x^{(i)}, \bold w, b)$代替$P_j(\bold x^{(i)},\theta_j)$，因此：  
 $$
 P(\bold y^{(i)}\mid\bold x^{(i)})=\prod_{j=1}^q\hat y_j^{y_j}  
-$$   
+$$  
+显然，当$y_j$越大，相应的$\hat y_j$也应该越大，这样$P(\bold y^{(i)}\mid\bold x^{(i)})$才会越大。因而当$y_j$时one-hot编码时，可以根据$\hat y_j$来判断类别；甚至当$y_j$不是ont-hot编码，而是各类别权重，那么$\hat y_j$可以给出相同趋势的权重。   
 推广到整个数据集则有：  
 $$
 P(\bold Y\mid\bold X)=\prod_{i=1}^nP(\bold y^{(i)}\mid\bold x^{(i)})  
