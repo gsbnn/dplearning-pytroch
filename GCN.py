@@ -127,8 +127,8 @@ if __name__ == "__main__":
     output_dim = 8  # GCN层输出的维度
     gru_hidden_dim = 32  # GRU的隐藏层维度
     dropout = 0.5
-    upper_tri = torch.randint(0, 2, (n_nodes, n_nodes))
-    upper_tri = torch.triu(upper_tri, diagonal=1)
+    upper_tri = torch.randint(0, 2, (n_nodes, n_nodes)) # 随机生成[0, 2)之间的整数
+    upper_tri = torch.triu(upper_tri, diagonal=1) # 将矩阵主对角及主对角以下元素设置为0
     # 对称化
     adj_matrix = upper_tri + upper_tri.t() # 保证邻接矩阵对称
 
