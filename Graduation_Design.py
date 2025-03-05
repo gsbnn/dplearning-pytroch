@@ -29,7 +29,7 @@ def get_distance(data, curret_sample):
     close_fn = torch.abs(curret_sample - data)
     close_fn = torch.exp(-1* close_fn)
     close_fn = close_fn.sum(dim=1) / data.shape[1]
-    distance = torch.sum(1 / (close_fn + 0.01) -1, dim=0, keepdim=True)
+    distance = torch.sum(1 / (close_fn + 0.0001) -1, dim=0, keepdim=True)
     return distance
 
 def get_similar_data(dataset, batch_size, win_size, curret_sample):
@@ -60,7 +60,7 @@ if __name__ == '__main__':
     select_channels = "B:N,P:Q"
     label = "产物浓度"
     dataset = get_dataset(data_file_path, select_channels, label)
-    curret_sample = dataset[22*400+1, 1:]
+    curret_sample = dataset[22*400+167, 1:]
     print("当前样本：", curret_sample)
 
     batch_size = 400
