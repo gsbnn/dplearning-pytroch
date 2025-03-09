@@ -31,30 +31,25 @@ def get_distance(data, curret_sample):
     close_fn = torch.abs(curret_sample - data)
     close_fn = torch.exp(-1* close_fn)
     close_fn = close_fn.sum(dim=1) / data.shape[1]
-    distance = torch.sum(1 / (close_fn + 0.0001) -1, dim=0, keepdim=True)
+    distance = torch.sum(1 / (close_fn + 1e-5) -1, dim=0, keepdim=True)
     return distance
 
-def get_similar_data(dataset, batch_size, win_size, curret_sample):
+def get_similar_data(dataset, batch_size, win_size, curret_data):
     """获取历史相似样本"""
     similar_data = []
     similar_label = []
     index_list = []
     for data, labels in batch_iter(dataset, batch_size):
         distance_list = []
-        # 数据标准化
-        data_mean = data.mean(dim=0)
-        data_std = data.std(dim=0)
-        data_norm = (data - data_mean)/data_std
-        curret_sample_norm = (curret_sample - data_mean)/(data_std + 1e-4)
         # 计算距离
-        for win_data in create_data_win(data_norm, win_size):
-            distance = get_distance(win_data, curret_sample_norm)
+        for win_data in create_data_win(data, win_size):
+            distance = get_distance(win_data, curret_data)
             distance_list.append(distance)
         distances = torch.cat(distance_list)
         # 获取相似数据
         index = distances.argmin(dim=0) # 每个批次的最近似窗口数据
         similar_data.append(data[index: index+win_size].t())
-        similar_label.append(labels[index+win_size-1].unsqueeze_(dim=0))
+        similar_label.append(labels[index+win_size-1].unsqueeze(dim=0))
         index_list.append(index)
         # 整理成tensor
         data = torch.stack(similar_data, dim=0)
@@ -160,8 +155,8 @@ if __name__ == '__main__':
     # 超参数
     batch_size = 400
     win_size = 4
-    lr = 0.05
-    wd = 10
+    lr = 0.01
+    wd = 1
     num_epochs = 50
 
     # 加载历史数据数据集
@@ -171,9 +166,8 @@ if __name__ == '__main__':
     label = "产物浓度"
     hist_dataset = get_dataset(history_data_path, select_channels, label)
     test_dataset = get_dataset(test_data_path, select_channels, label)
-    curret_sample = test_dataset[11*400+128: 11*400+128+win_size, 1:]
-    curret_label = test_dataset[11*400+128+win_size, 0]
-    print("当前样本：", curret_sample, curret_label)
+    curret_sample = test_dataset[0*400+222: 0*400+222+win_size]
+    print("当前样本：", curret_sample)
 
     # 邻接矩阵
     mic_path = 'data\mic_result.xlsx'
@@ -181,45 +175,43 @@ if __name__ == '__main__':
     n_nodes = len(adjmatrix)
 
     # 模型
-    net = nn.Sequential(GCNConv2d(adjmatrix), nn.Linear(win_size, 8), 
+    net = nn.Sequential(GCNConv2d(adjmatrix), nn.Linear(win_size, win_size), 
                         nn.BatchNorm1d(n_nodes), nn.ReLU(), 
-                        GCNConv2d(adjmatrix), nn.Linear(8, 16), 
-                        nn.BatchNorm1d(n_nodes), nn.ReLU(),
-                        GCNConv2d(adjmatrix), nn.Linear(16, 32), 
-                        nn.BatchNorm1d(n_nodes), nn.ReLU(),
+                        GCNConv2d(adjmatrix), nn.Linear(win_size, win_size), 
+                        nn.BatchNorm1d(n_nodes), nn.ReLU(), 
+                        GCNConv2d(adjmatrix), nn.Linear(win_size, win_size), 
+                        nn.BatchNorm1d(n_nodes), nn.ReLU(), 
                         nn.Flatten(),
-                        nn.Linear(n_nodes * 32, 64), 
-                        nn.BatchNorm1d(64), nn.ReLU(), 
-                        nn.Linear(64, 1))
+                        nn.Linear(n_nodes * win_size, 128), 
+                        nn.BatchNorm1d(128), 
+                        nn.ReLU(), 
+                        nn.Linear(128, 1))
     
     # 损失图
     loss_fig, loss_axes = plt.subplots(1, 1, figsize=(6, 4))
     config_figure(loss_axes, 'epoch', 'loss', [1, num_epochs], [0, 0.5])
+
+    # 标准化
+    data_mean = hist_dataset.mean(dim=0)
+    data_std = hist_dataset.std(dim=0)
+    hist_dataset = (hist_dataset - data_mean) / (data_std + 1e-5)
+    curret_sample = (curret_sample - data_mean) / (data_std + 1e-5)
+    print("特征均值：", data_mean)
+    print("当前归一化样本：", curret_sample)
     
     # 获取历史相似数据
-    index_list, similar_data, similar_label = get_similar_data(hist_dataset, batch_size, win_size, curret_sample[-1])
+    index_list, similar_data, similar_label = get_similar_data(hist_dataset, batch_size, win_size, curret_sample[-1, 1:])
+    print("相似样本索引：", index_list)
 
     # 训练
-#   for layer in net:
-#        similar_data = layer(similar_data)
-#        print(layer.__class__.__name__, 'output shape:\t', similar_data.shape)
-    # 数据变形及归一化
-    curret_sample = curret_sample.t().unsqueeze(dim=0)
-    curret_label = curret_label.unsqueeze(dim=0)
-#    data_mean = similar_data.mean(dim=(0, 2)).reshape(-1, 1)
-#    data_std = similar_data.std(dim=(0, 2)).reshape(-1, 1)
-#    label_mean = similar_label.mean()
-#    label_std = similar_label.std()
-#    similar_data = (similar_data - data_mean) / (data_std + 1e-4)
-#    similar_label = (similar_label - label_mean) / (label_std + 1e-4)
-#    curret_sample = (curret_sample - data_mean) / (data_std + 1e-4)
-#    curret_label = (curret_label - label_mean) / (label_std + 1e-4)
-#    print("当前归一化样本：", curret_sample, curret_label)
-
+    curret_data = curret_sample[:, 1:].t().unsqueeze(dim=0)
+    curret_label = curret_sample[-1, 0].unsqueeze(dim=0)
     x_list, loss_list = model_train(net, similar_data, similar_label, lr, wd, num_epochs, 'cuda:0')
-    print(loss_list[-1])
+    print("train loss: ", loss_list[-1])
     loss_axes.plot(x_list, loss_list, label='loss')
-    error, y_model = model_test_gpu(net, curret_sample, curret_label)
-    print('error: ', error, 'prediction: ', y_model)
+    error, y_model = model_test_gpu(net, curret_data, curret_label)
+    print('relavalue: ', curret_label)
+    print('prediction: ', y_model)
+    print('error: ', error)
     loss_axes.legend()
     plt.show()
