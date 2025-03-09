@@ -1,6 +1,8 @@
 import torch
 from torch import nn
 import pandas as pd
+import numpy as np
+from matplotlib import pyplot as plt
 
 def get_dataset(data_file_path, select_channels, label):
     """获取数据集"""
@@ -8,7 +10,7 @@ def get_dataset(data_file_path, select_channels, label):
     target_data = torch.tensor(data[label].values).reshape(-1, 1) # torch.Size([20000, 1])
     input_data = torch.tensor(data.drop(label, axis=1).values) # torch.Size([20000, 15])
     dataset = torch.cat([target_data, input_data], 1) # torch.Size([20000, 16])
-    return dataset
+    return dataset.to(dtype=torch.float32) # 确定好精度
 
 def batch_iter(dataset, batch_size):
     """产生批数据"""
@@ -35,6 +37,7 @@ def get_distance(data, curret_sample):
 def get_similar_data(dataset, batch_size, win_size, curret_sample):
     """获取历史相似样本"""
     similar_data = []
+    similar_label = []
     index_list = []
     for data, labels in batch_iter(dataset, batch_size):
         distance_list = []
@@ -42,69 +45,181 @@ def get_similar_data(dataset, batch_size, win_size, curret_sample):
         data_mean = data.mean(dim=0)
         data_std = data.std(dim=0)
         data_norm = (data - data_mean)/data_std
-        curret_sample_norm = (curret_sample - data_mean)/data_std
-        # 获取相似样本
+        curret_sample_norm = (curret_sample - data_mean)/(data_std + 1e-4)
+        # 计算距离
         for win_data in create_data_win(data_norm, win_size):
             distance = get_distance(win_data, curret_sample_norm)
             distance_list.append(distance)
         distances = torch.cat(distance_list)
+        # 获取相似数据
         index = distances.argmin(dim=0) # 每个批次的最近似窗口数据
-        similar_data.append((data[index: index+win_size].t(), 
-                             labels[index+win_size-1]))
+        similar_data.append(data[index: index+win_size].t())
+        similar_label.append(labels[index+win_size-1].unsqueeze_(dim=0))
         index_list.append(index)
-    return index_list, similar_data # similar_data: list[(data[nodes, in_feature], labels[in_features])]
+        # 整理成tensor
+        data = torch.stack(similar_data, dim=0)
+        labels = torch.cat(similar_label)
+    return index_list, data, labels # data[batch_size, nodes, in_feature], labels[batch_size]
+
+def GraphCov(X, adjmatrix):
+    """图卷积"""
+    degree = adjmatrix.sum(dim=1)
+    degree_inv_sqrt = degree.pow(-0.5)
+    degree_inv_sqrt[torch.isinf(degree_inv_sqrt)] = 0
+    adjmatrix_norm = adjmatrix * degree_inv_sqrt.reshape(-1, 1)
+    adjmatrix_norm = adjmatrix_norm * degree_inv_sqrt
+    return torch.matmul(adjmatrix_norm, X)
+
+class GCNConv2d(nn.Module):
+    """图卷积层"""
+    def __init__(self, adjmatrix):
+        super().__init__()
+        self.register_buffer('adjmatrix', adjmatrix)
+    def forward(self, X):
+        Y = GraphCov(X, self.adjmatrix)
+        return Y
+    
+def config_figure(axes, xlabel, ylabel, xlim, ylim, xscale='linear', yscale='linear'):
+    """设置图片属性"""
+    axes.set_xlabel(xlabel)
+    axes.set_ylabel(ylabel)
+    axes.set_xlim(xlim)
+    axes.set_ylim(ylim)
+    axes.set_xscale(xscale)
+    axes.set_yscale(yscale)
+    axes.grid()
+
+def model_train(net, X, y, lr, wd, num_epochs, device):
+    """训练模型"""
+    x_list = []
+    y_list = []
+    # 权重初始化
+    def init_weights(m):
+        if type(m) == nn.Linear:
+            nn.init.xavier_uniform_(m.weight)
+    net.apply(init_weights)
+    # 将模型参数和数据移到GPU
+    print('tarining on:', device)
+    net.to(device)
+    X, y = X.to(device), y.to(device)
+    # 定义优化函数和损失函数
+    bias_params = [p for name, p in net.named_parameters() if 'weight' in name]
+    others = [p for name, p in net.named_parameters() if 'weight' not in name]
+    optimizer = torch.optim.SGD([{'params': bias_params, 'weight_decay': wd},  # 使用权重衰减
+                                 {'params': others}], lr=lr)
+    loss = nn.MSELoss()
+    # 训练
+    for i in range(num_epochs):
+        net.train()
+        optimizer.zero_grad()
+        y_model = net(X)
+        l = loss(y_model, y.reshape(y_model.shape))
+        l.backward()
+        optimizer.step()
+        x_list.append(i+1)
+        y_list.append(l.item()) # tensor--->int
+    return x_list, y_list
+
+def model_test_gpu(net, X, y,  device=None):
+    """计算预测误差"""
+    print('test on: ', next(iter(net.parameters())).device)
+    if isinstance(net, nn.Module):
+        net.eval() # 设置为评估模式
+        if not device:
+            device = next(iter(net.parameters())).device
+    with torch.no_grad():
+        X = X.to(device)
+        y = y.to(device)
+        y_model = net(X)
+        error = y_model - y.reshape(y_model.shape)
+    return error, y_model
+
+def just_intime_learning(net, dataset, test_data, label, batch_size, win_size, lr, num_epochs, device):
+    """即时学习+图卷积网络"""
+    error_list = []
+    for data in test_data:
+        index_list, similar_data, similar_label = get_similar_data(dataset, batch_size, win_size, data)
+        epoch_list, loss_list = model_train(net, similar_data, similar_label, lr, num_epochs, device)
+        error = model_test_gpu(net, test_data, label)
+        error_list.append(error)
+    rmse = torch.cat(error_list, 0)
+    rmse = torch.sqrt((rmse ** 2).sum() / rmse.shape[0])
+    return rmse
+
+def get_adjmatrix(mic_path, label):
+    """获取邻接矩阵"""
+    mic = pd.read_excel(mic_path, header=0, index_col=0)
+    mic = np.array(mic.drop(index=label, columns=label))
+    adjmatrix = np.zeros(mic.shape)
+    adjmatrix[mic > 0.4] = 1
+    adjmatrix = torch.tensor(adjmatrix, dtype=torch.float32)
+    print("邻接矩阵：", adjmatrix)
+    return adjmatrix
 
 if __name__ == '__main__':
+    # 超参数
+    batch_size = 400
+    win_size = 4
+    lr = 0.05
+    wd = 10
+    num_epochs = 50
 
-    data_file_path = 'data\pensimdata_full_variable_50_batch_本科.xlsx'
+    # 加载历史数据数据集
+    history_data_path = 'data\pensimdata_full_variable_50_batch_本科.xlsx'
+    test_data_path = 'data\pensimdata_full_variable_50_batch_本科2.xlsx'
     select_channels = "B:N,P:Q"
     label = "产物浓度"
-    dataset = get_dataset(data_file_path, select_channels, label)
-    curret_sample = dataset[22*400+167, 1:]
-    print("当前样本：", curret_sample)
+    hist_dataset = get_dataset(history_data_path, select_channels, label)
+    test_dataset = get_dataset(test_data_path, select_channels, label)
+    curret_sample = test_dataset[11*400+128: 11*400+128+win_size, 1:]
+    curret_label = test_dataset[11*400+128+win_size, 0]
+    print("当前样本：", curret_sample, curret_label)
 
-    batch_size = 400
-    win_size = 5
-        
-    index_list, similra_data = get_similar_data(dataset, batch_size, win_size, curret_sample)
-    print(index_list, len(index_list), similra_data[1][1])
+    # 邻接矩阵
+    mic_path = 'data\mic_result.xlsx'
+    adjmatrix = get_adjmatrix(mic_path, label)
+    n_nodes = len(adjmatrix)
 
-#    data_list = []
-#    for data, _ in batch_iter(dataset, batch_size):
-#        for data_win in create_data_win(data, 4):
-#            data_list.append(data_win)
-#        break
-#    print(data_list[-1])
+    # 模型
+    net = nn.Sequential(GCNConv2d(adjmatrix), nn.Linear(win_size, 8), 
+                        nn.BatchNorm1d(n_nodes), nn.ReLU(), 
+                        GCNConv2d(adjmatrix), nn.Linear(8, 16), 
+                        nn.BatchNorm1d(n_nodes), nn.ReLU(),
+                        GCNConv2d(adjmatrix), nn.Linear(16, 32), 
+                        nn.BatchNorm1d(n_nodes), nn.ReLU(),
+                        nn.Flatten(),
+                        nn.Linear(n_nodes * 32, 64), 
+                        nn.BatchNorm1d(64), nn.ReLU(), 
+                        nn.Linear(64, 1))
+    
+    # 损失图
+    loss_fig, loss_axes = plt.subplots(1, 1, figsize=(6, 4))
+    config_figure(loss_axes, 'epoch', 'loss', [1, num_epochs], [0, 0.5])
+    
+    # 获取历史相似数据
+    index_list, similar_data, similar_label = get_similar_data(hist_dataset, batch_size, win_size, curret_sample[-1])
 
-#    print(len(similra_data))
-#    print(index_con[0:5])
-#    print(similra_data[0:5])
-#    a = 1/torch.arange(1, 10)
-#    b = a.sum(dim=0, keepdim=True)
-#    print(a,b)
-#    b = torch.arange(0, 15).sum(dim=0, keepdim=True)
-#    c = [a, b]
-#    print(torch.cat(c))
-#    print(a)
+    # 训练
+#   for layer in net:
+#        similar_data = layer(similar_data)
+#        print(layer.__class__.__name__, 'output shape:\t', similar_data.shape)
+    # 数据变形及归一化
+    curret_sample = curret_sample.t().unsqueeze(dim=0)
+    curret_label = curret_label.unsqueeze(dim=0)
+#    data_mean = similar_data.mean(dim=(0, 2)).reshape(-1, 1)
+#    data_std = similar_data.std(dim=(0, 2)).reshape(-1, 1)
+#    label_mean = similar_label.mean()
+#    label_std = similar_label.std()
+#    similar_data = (similar_data - data_mean) / (data_std + 1e-4)
+#    similar_label = (similar_label - label_mean) / (label_std + 1e-4)
+#    curret_sample = (curret_sample - data_mean) / (data_std + 1e-4)
+#    curret_label = (curret_label - label_mean) / (label_std + 1e-4)
+#    print("当前归一化样本：", curret_sample, curret_label)
 
-
-
-#    for data, label in batch_iter(dataset, 400):
-#        data_mean = data.mean(dim=0)
-#        data_std = data.std(dim=0)
-#        print("样本均值：\r", data_mean)
-#        print(data_std)
-#        print(data[1])
-#        data_norm = (data - data_mean)/data_std
-#        curret_sample_norm = (curret_sample - data_mean)/data_std
-#        print("标准化当前样本：", curret_sample_norm)
-#        print(data_norm[1])
-#        cov = data_norm[77: 82].t().cov()
-#        cov_inv = cov.inverse()
-#        MahaMatrix = torch.matmul(curret_sample_norm-data_norm[77: 82], cov_inv)
-#        Mahadistance = torch.diag(torch.matmul(MahaMatrix, (curret_sample_norm-data_norm[77: 82]).t()))
-#        Mahadistance = torch.sqrt(Mahadistance)
-#        print("协方差矩阵：\n", cov)
-#        print("马氏矩阵：\n",Mahadistance)
-#        print(cov_inv)
-#        break
+    x_list, loss_list = model_train(net, similar_data, similar_label, lr, wd, num_epochs, 'cuda:0')
+    print(loss_list[-1])
+    loss_axes.plot(x_list, loss_list, label='loss')
+    error, y_model = model_test_gpu(net, curret_sample, curret_label)
+    print('error: ', error, 'prediction: ', y_model)
+    loss_axes.legend()
+    plt.show()
