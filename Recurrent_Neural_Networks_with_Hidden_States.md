@@ -1,7 +1,7 @@
 # 有隐状态的循环神经网络  
 
 ## 模型
-假设在在时间步$t$处有小批量输入$\bold X_t\in\mathbb R^{n\times d}$。换言之，有$n$个序列样本，每个序列样本在时间步$t$处的样本特征数是$d$，因此完整的数据集是三维张量$\mathsf X\in\mathbb R^{n\times t\times d}$。  
+假设在在时间步$t$处有小批量输入$\bold X_t\in\mathbb R^{n\times d}$。换言之，有$n$个序列样本，每个序列样本在时间步$t$处的样本特征数是$d$，因此完整的数据集是三维张量$\mathsf X\in\mathbb R^{n\times T\times d}$，$T为时间步长个数$。  
 
 当前时间步的隐藏状态由上一时间步的隐藏状态和当前时间步的输入决定：
 $$
