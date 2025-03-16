@@ -18,7 +18,7 @@ net.apply(init_weights)
 # nn.CrossEntropyLoss()的input和traget
 # input:单个样本(C)，批样本(batch_size, C)，高维批样本(batch_size, C, d1, d2,..., dk)
 # traget:类别索引or类别概率
-# 类别索引：维度(batch_size)or(batch_size, d1, d2,..., dk)；值：[0, C)
+# 类别索引：单个样本()，批样本(batch_size)，高维样本(batch_size, d1, d2,..., dk)；值：[0, C)
 # 类别概率:维度与input一致；值(0~1)
 loss = nn.CrossEntropyLoss(reduction='none')
 
