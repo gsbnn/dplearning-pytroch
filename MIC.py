@@ -11,6 +11,9 @@ def get_mic(dataframe, mic_path):
     y_label = dataframe.columns.to_list()
     print(y_label)
     data = np.array(dataframe)
+    data_mean = data.mean(axis=0)
+    data_std = data.std(axis=0)
+    data = (data - data_mean) / data_std
     n = len(y_label)
     mine = MINE(alpha=0.6, c=15)
     result = np.zeros((n, n))
@@ -22,3 +25,5 @@ def get_mic(dataframe, mic_path):
 
     RT = pd.DataFrame(result, index=y_label, columns=y_label)
     RT.to_excel(mic_path, header=True, index=True)
+
+get_mic(data, 'data\mic_result_1.xlsx')
