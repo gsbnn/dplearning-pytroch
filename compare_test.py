@@ -21,10 +21,10 @@ def get_win_data(dataset, win_size):
     win_label_list = []
     for i in range(len(dataset) - win_size + 1):
         win_list.append(dataset[i: i + win_size, 1:].t())
-        win_label_list.append(dataset[i: i + win_size, 0])
+        win_label_list.append(dataset[i + win_size - 1, 0])
     win_data = torch.stack(win_list)
     win_label = torch.stack(win_label_list)
-    return win_data, win_label # [batch_size, n_nodes, time_steps] [batch_size, time_steps]
+    return win_data, win_label # [batch_size, n_nodes, time_steps] [batch_size]
 
 def data_normal(data, dim=0, keepdim=False, bias=1e-6):
     """数据标准化"""
@@ -36,7 +36,7 @@ def create_data_iter(win_dataset, batch_size, workers=4, is_train=True):
     """创建数据迭代器"""
     dataset = data.TensorDataset(*win_dataset)
     return data.DataLoader(dataset, batch_size, shuffle=is_train, drop_last=True, num_workers=workers) 
-# tuple([batch_size, n_nodes, time_steps], [batch_size, time_steps])
+# tuple([batch_size, n_nodes, time_steps], [batch_size])
 
 def graphcov(X, adjmatrix):
     """图卷积"""
@@ -79,8 +79,8 @@ class GCNGRU(nn.Module):
     def forward(self, X, states):
         Y = self.gcn2(self.gcn1(X))
         Y = Y.transpose(1, 2) # [batch_size, time_steps, in_features]
-        Y, _ = self.gru(Y, states) #[batch_size, time_steps, hidden_features]
-        Y = self.fc(Y) # [batch_size, time_steps, out_features]
+        Y, _ = self.gru(Y, states) # [batch_size, time_steps, hidden_features]
+        Y = self.fc(Y[:, -1, :]) # [batch_size, out_features] 最后一个时间步输出
         return Y
     
     def init_states(self, device, batch_size):
@@ -109,19 +109,20 @@ def config_figure(axes, xlabel, ylabel, xlim, ylim, xscale='linear', yscale='lin
     axes.set_yscale(yscale)
     axes.grid()
 
-def model_train(net, train_iter, num_epochs, device):
+def model_train(net, train_iter, num_epochs, test_data, test_label, device):
     """训练模型"""
     x_list = []
-    y_list = []
+    l_list = []
+    e_list = []
     # 权重初始化
     def init_weights(m):
         if type(m) == nn.Linear:
             nn.init.xavier_uniform_(m.weight)
     net.apply(init_weights)
     loss = nn.MSELoss()
-    optimizer = torch.optim.SGD(net.parameters(), lr, weight_decay=wd)
+    optimizer = torch.optim.Adam(net.parameters(), lr, weight_decay=wd)
     # 将模型参数和数据移到GPU
-#    print('tarining on:', device)
+    print('tarining on:', device)
     net.to(device)
     # 训练
     for i in range(num_epochs):
@@ -134,9 +135,12 @@ def model_train(net, train_iter, num_epochs, device):
             l = loss(y_model, y.reshape(y_model.shape))
             l.backward()
             optimizer.step()
-        x_list.append(i+1)
-        y_list.append(l.cpu().item()) # tensor--->int
-    return x_list, y_list
+        error, _, _ = model_test_gpu(net, test_data, test_label)
+        error = torch.mean(error ** 2)
+        x_list.append(i)
+        l_list.append(l.cpu().item()) # tensor--->int
+        e_list.append(error.item())
+    return x_list, l_list, e_list
 
 def model_test_gpu(net, X, y, device=None):
     """计算预测误差"""
@@ -149,10 +153,10 @@ def model_test_gpu(net, X, y, device=None):
         X = X.to(device)
         y = y.to(device)
         state = net.init_states(device, len(X))
-        y_model = net(X, state)
-        y_pred = y_model.reshape(y.shape)[:, win_size-1]
-        error = y_pred - y[:, win_size-1]
-    return error.cpu(), y_pred.cpu(), y[:, win_size-1].cpu()
+        y_pred = net(X, state)
+        y_pred = y_pred.reshape(y.shape)
+        error = y_pred - y
+    return error.cpu(), y_pred.cpu(), y.cpu()
 
 def get_adjmatrix(mic_path, label):
     """获取邻接矩阵"""
@@ -168,51 +172,56 @@ if __name__ == '__main__':
     # 超参数
     batch_size = 400
     win_size = 5
-    lr = 0.002 # 0.002
+    lr = 0.01 # 0.002
     wd = 0 # 0
-    num_epochs = 100 # 100
+    num_epochs = 50 # 100
     dropout = 0 # 0
-    gru_hidden = 256 # 128
+    gru_hidden = 128 # 128
     gru_layers = 2
 
     # 加载历史数据数据集
     history_data_path = 'data\pensimdata_full_variable_50_batch_本科3.xlsx'
     test_data_path = 'data\pensimdata_full_variable_50_batch_本科4.xlsx'
-#    select_channels = "D:I,K:N,P,Q"
-    select_channels = "B:N,P:Q"
-    label = "产物浓度"
-    hist_dataset = get_dataset(history_data_path, select_channels, label)
-    test_dataset = get_dataset(test_data_path, select_channels, label)[34*batch_size: 34*batch_size+batch_size]
-#    curret_sample = test_dataset[27*400+274: 27*400+274+win_size]
-    min_batch = 1
-#    batch = len(hist_dataset) // batch_size * min_batch
+    select_channels = "B:E,G,I:N,P:Q" #（改, 产物浓度）
+    select_channels = "B:E,G:H,J:N,P:Q" #（改, 菌体浓度）
+#    label = "产物浓度"
+    label = "菌体浓度" # (改, 菌体浓度)
+    hist_dataset = get_dataset(history_data_path, select_channels, label)[0: batch_size * 50]
+    test_dataset = get_dataset(test_data_path, select_channels, label)[6*batch_size: 6*batch_size+batch_size]
+
+    # 归一化
+    histdataset_norm, histdataset_mean, histdataset_std = data_normal(hist_dataset, dim=0)
+    histlabel_mean, histlabel_std = histdataset_mean[0], histdataset_std[0]
+    testdataset_norm = (test_dataset - histdataset_mean) / histdataset_std
 
     # 邻接矩阵
     mic_path = 'data\mic_result.xlsx'
-#    drop_label = ["曝气率", "搅拌速率", "底物流加温度", "溶解氧浓度", "产物浓度", "培养液体积", "PH值", "反应罐温度"]
-#    drop_label = ["曝气率", "搅拌速率", "产物浓度", "培养液体积"]
-    drop_label = label
+    drop_label = ["底物浓度", "菌体浓度", "产物浓度"] #（改）
     adjmatrix = get_adjmatrix(mic_path, drop_label)
     n_nodes = len(adjmatrix)
 
     # 构造数据集
-    win_dataset = get_win_data(hist_dataset, win_size)
-    train_iter = create_data_iter(win_dataset, 512, 4, True)
-    test_data = get_win_data(test_dataset, win_size)
+    win_dataset = get_win_data(histdataset_norm, win_size)
+    train_iter = create_data_iter(win_dataset, 512, 4, True) # 归一化训练集
+    test_data, test_label = get_win_data(testdataset_norm, win_size) # 归一化测试集
 
     # 模型
     net = GCNGRU(win_size, n_nodes, gru_hidden, 1, 2, adjmatrix, dropout)
 
     # 损失图
     _, axes = plt.subplots(2, 2, figsize=(6, 4))
-    config_figure(axes[0, 0], 'time', 'Penicillin concentration/(g/L)', [win_size-1, batch_size-1], [0, 2.0])
-    config_figure(axes[0, 1], 'time', 'Error/(g/L)', [win_size-1, batch_size-1], [-0.2, 0.2])
-    config_figure(axes[1, 0], 'epochs', 'loss', [0, num_epochs], [-0.2, 0.2])
+#    config_figure(axes[0, 0], 'time', 'Penicillin concentration/(g/L)', [win_size-1, batch_size], [0, 2.0])
+    config_figure(axes[0, 0], 'time', 'Cell concentration/(g/L)', [win_size-1, batch_size], [0, 14.5])
+    config_figure(axes[0, 1], 'time', 'Error/(g/L)', [win_size-1, batch_size], [-0.2, 0.2])
+    config_figure(axes[1, 0], 'epochs', 'loss', [0, num_epochs], [0, 0.2])
 
     # 训练
-    epochs, loss = model_train(net, train_iter, num_epochs, 'cuda:0')
+    epochs, trainloss, testloss = model_train(net, train_iter, num_epochs, test_data, test_label, 'cuda:0')
     # 预测
-    error, y_pred, y_real = model_test_gpu(net, test_data[0], test_data[1], 'cuda:0')
+    error, y_pred, y_real = model_test_gpu(net, test_data, test_label, 'cuda:0')
+    error = error * histlabel_std
+    y_pred = y_pred * histlabel_std + histlabel_mean
+    y_real = y_real * histlabel_std + histlabel_mean
     rmse = torch.sqrt((error ** 2).sum() / error.shape[0])
     r2 = 1 - (error ** 2).sum() / ((y_pred - y_real.mean()) ** 2).sum()
     print('RMSE: ', rmse, 'R2: ', r2)
@@ -223,6 +232,12 @@ if __name__ == '__main__':
     axes[0, 0].plot(x, y_real.detach().numpy(), 'b-', label='real value')
     axes[0, 0].plot(x, y_pred.detach().numpy(), 'r-', label='predict value')
     axes[0, 1].plot(x, error.detach().numpy(), 'b-')
-    axes[1, 0].plot(epochs, loss, 'b-')
+    axes[1, 0].plot(epochs, trainloss, 'b-', label='train loss')
+    axes[1, 0].plot(epochs, testloss, 'r-', label='test loss')
     axes[0, 0].legend()
+    axes[1, 0].legend()
     plt.show()
+
+    Y = torch.cat((y_pred.reshape(-1, 1), error.reshape(-1, 1)), dim=1)
+    Y = pd.DataFrame(Y.detach().numpy())
+    Y.to_excel('data\GCN_Output.xlsx', index=False, header=False)
