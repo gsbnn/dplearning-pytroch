@@ -5,8 +5,6 @@ from torch.nn import functional as F
 import pandas as pd
 import numpy as np
 from matplotlib import pyplot as plt
-from fastdtw import fastdtw
-from scipy.spatial.distance import euclidean
 
 def get_dataset(data_file_path, select_channels, label):
     """获取数据集，维度[20000, 16]"""
@@ -257,30 +255,29 @@ if __name__ == '__main__':
     gru_layers = 2
 
     # 加载历史数据数据集
-    history_data_path = 'data\pensimdata_full_variable_50_batch_本科3.xlsx'
-    test_data_path = 'data\pensimdata_full_variable_50_batch_本科4.xlsx'
-#    select_channels = "D:I,K:N,P,Q"
-#    select_channels = "B:N,P:Q"
-    select_channels = "B:E,G,I:N,P:Q" #（改）
-    label = "产物浓度"
+    history_data_path = 'data\pensimdata_full_variable_50_batch_本科.xlsx'
+    test_data_path = 'data\pensimdata_full_variable_50_batch_本科2.xlsx'
+#    select_channels = "B:E,G,I:N,P:Q" #（改, 产物浓度）
+    select_channels = "B:E,G:H,J:N,P:Q" #（改, 菌体浓度）
+#    select_channels = "B:F,G,J:N,P:Q" #（改, 底物浓度）
+#    label = "产物浓度"
+    label = "菌体浓度" # (改, 菌体浓度)
+#    label = "底物浓度" # (改, 底物浓度)
     hist_dataset = get_dataset(history_data_path, select_channels, label)
-    test_dataset = get_dataset(test_data_path, select_channels, label)[7*batch_size: 7*batch_size+batch_size]
-#    curret_sample = test_dataset[27*400+274: 27*400+274+win_size]
+    test_dataset = get_dataset(test_data_path, select_channels, label)[9*batch_size: 9*batch_size+batch_size]
     min_batch = 1
-#    batch = len(hist_dataset) // batch_size * min_batch
+
 
     # 邻接矩阵
     mic_path = 'data\mic_result.xlsx'
-#    drop_label = ["曝气率", "搅拌速率", "底物流加温度", "溶解氧浓度", "产物浓度", "培养液体积", "PH值", "反应罐温度"]
     drop_label = ["底物浓度", "菌体浓度", "产物浓度"] #（改）
-#    drop_label = label
     adjmatrix = get_adjmatrix(mic_path, drop_label)
     n_nodes = len(adjmatrix)
 
     # 损失图
     _, axes = plt.subplots(1, 2, figsize=(6, 4))
-    config_figure(axes[0], 'time', 'Penicillin concentration/(g/L)', [win_size-1, batch_size-1], [0, 2.0])
-    config_figure(axes[1], 'time', 'Error/(g/L)', [win_size-1, batch_size-1], [-0.2, 0.2])
+    config_figure(axes[0], 'Sampling time\h', 'Penicillin concentration/(g/L)', [win_size-1, batch_size-1], [0, 14.0])
+    config_figure(axes[1], 'Sampling time\h', 'Error/(g/L)', [win_size-1, batch_size-1], [-1.0, 1.0])
 
     rmse, r2, y_real, y_pred, error = just_intime_learning(hist_dataset, test_dataset, batch_size, 
                          win_size, n_nodes, gru_hidden, 
@@ -296,3 +293,6 @@ if __name__ == '__main__':
     axes[1].plot(x, error.detach().numpy(), 'b-')
     axes[0].legend()
     plt.show()
+    # Y = torch.cat((y_real.reshape(-1, 1), y_pred.reshape(-1, 1), error.reshape(-1, 1)), dim=1)
+    # Y = pd.DataFrame(Y.detach().numpy())
+    # Y.to_excel('data\JITL_GCN_Output.xlsx', index=False, header=False)
