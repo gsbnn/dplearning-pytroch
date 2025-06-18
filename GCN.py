@@ -23,7 +23,7 @@ class GraphConvolution(nn.Module):
 
     def reset_parameters(self):
         stdv = 1. / math.sqrt(self.weight.size(1))
-        self.weight.data.uniform_(-stdv, stdv)
+        self.weight.data.uniform_(-stdv, stdv) # He初始化的某种变体
         if self.bias is not None:
             self.bias.data.uniform_(-stdv, stdv)
 
@@ -39,7 +39,7 @@ class GraphConvolution(nn.Module):
         degree_inv_sqrt = degree.pow(-0.5)
         # 防止除0
         degree_inv_sqrt[torch.isinf(degree_inv_sqrt)] = 0
-        adj_norm = adj * degree_inv_sqrt[:, None]
+        adj_norm = adj * degree_inv_sqrt[:, None] # degree_inv_sqrt[:, None]调整了度矩阵形状
         adj_norm = adj_norm * degree_inv_sqrt[None, :]
 
         # 直接使用torch.matmul进行批量矩阵乘法
@@ -80,7 +80,7 @@ class GCNGRU(nn.Module):
         self.fc = nn.Sequential(
             nn.Linear(gru_hidden, 32),
             nn.ReLU(),
-            nn.Linear(32, 1)  # 输出最终预测值
+            nn.Linear(32, 1)  # 输出最终预测值，作为特征向量：最后一个隐藏状态可直接用于分类、回归或生成任务。
         )
 
         self.dropout = dropout
@@ -92,7 +92,7 @@ class GCNGRU(nn.Module):
         """
         batch_size, time_steps = x.size(0), x.size(1)
 
-        # 各时间步GCN处理
+        # 各时间步GCN处理，实际可以直接使用torch.matmul()
         gcn_outputs = []
         for t in range(time_steps):
             x_t = x[:, t, :, :]  # (batch, nodes, feat)
@@ -110,7 +110,7 @@ class GCNGRU(nn.Module):
         gru_input = torch.cat(gcn_outputs, dim=1)
 
         # GRU处理
-        gru_out, _ = self.gru(gru_input)
+        gru_out, _ = self.gru(gru_input) # GRU单元的输出是什么？
 
         # 最终预测：使用GRU输出的最后一个时间步
         output = self.fc(gru_out[:, -1, :])  # 使用最后一个时间步的输出
@@ -130,7 +130,7 @@ if __name__ == "__main__":
     upper_tri = torch.randint(0, 2, (n_nodes, n_nodes)) # 随机生成[0, 2)之间的整数
     upper_tri = torch.triu(upper_tri, diagonal=1) # 将矩阵主对角及主对角以下元素设置为0
     # 对称化
-    adj_matrix = upper_tri + upper_tri.t() # 保证邻接矩阵对称
+    adj_matrix = upper_tri + upper_tri.t() # 保证邻接矩阵对称，忘加单位矩阵了
 
     # 模拟输入数据
     x_data = torch.randn(32, time_steps, n_nodes, input_dim)  # 假设batch_size=32, 随机生成数据

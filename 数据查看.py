@@ -4,7 +4,7 @@ import random
 
 # 设定txt文件所在的文件夹路径
 txt_folder_path = 'data/pensim1000批次'  # 修改为你的txt文件夹路径
-output_excel_path = 'data/pensimdata_full_variable_50_batch_本科.xlsx'  # 输出的Excel文件路径
+output_excel_path = 'data/pensimdata_full_variable_100_batch_本科.xlsx'  # 输出的Excel文件路径
 
 # 预定义列名
 columns =["采样时刻","曝气率","搅拌速率","底物流加速度","底物流加温度","底物浓度","溶解氧浓度","菌体浓度","产物浓度","培养液体积","CO2浓度","PH值","反应罐温度","反应热","酸的流速","碱的浓度","冷水流速","热水流速"]
@@ -13,7 +13,7 @@ columns =["采样时刻","曝气率","搅拌速率","底物流加速度","底物
 txt_files = [f for f in os.listdir(txt_folder_path) if f.endswith('.txt')]
 
 # 随机选择50个txt文件
-selected_files = random.sample(txt_files, 50)
+selected_files = random.sample(txt_files, 100)
 
 # 初始化一个空的DataFrame来存放所有选择的批次数据
 all_data = pd.DataFrame()
