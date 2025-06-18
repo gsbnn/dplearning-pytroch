@@ -97,6 +97,7 @@ class GCNCov(nn.Module):
         Y = self.linear(Y)
         # 残差连接
         Y = F.relu(Y + X)
+#        Y = F.tanh(Y + X) # (改)
         return self.dropout(Y)
     
 class GCNGRU(nn.Module):
@@ -147,14 +148,16 @@ def config_figure(axes, xlabel, ylabel, xlim, ylim, xscale='linear', yscale='lin
     axes.set_yscale(yscale)
     axes.grid()
 
-def model_train(net, X, y, lr, wd, num_epochs, device):
+def model_train(net, X, y, current_data, current_label, lr, wd, num_epochs, device):
     """训练模型"""
     x_list = []
-    y_list = []
+    l_list = []
+    e_list = []
     # 权重初始化
     def init_weights(m):
         if type(m) == nn.Linear:
             nn.init.xavier_uniform_(m.weight)
+#            nn.init.uniform_(m.weight) # (改)
     net.apply(init_weights)
     # 将模型参数和数据移到GPU
     print('tarining on:', device)
@@ -165,26 +168,22 @@ def model_train(net, X, y, lr, wd, num_epochs, device):
     loss = nn.MSELoss(reduction='mean')
     # 训练
     for i in range(num_epochs):
-#        for j in range(0, batch, min_batch):
-#            index = j * (win_size - 1)
-#        state = net.init_states(device, min_batch)
         state = net.init_states(device, len(X))
         net.train()
         optimizer.zero_grad()
         y_model = net(X, state)
         l = loss(y_model, y.reshape(y_model.shape))
-#        y_model = net(X[j: j + min_batch], state)
-#        l = loss(y_model, y[index: index + (win_size - 1) * min_batch].reshape(y_model.shape))
         l.backward()
-#        grad_clipping(net, 1)
         optimizer.step()
         x_list.append(i+1)
-        y_list.append(l.item()) # tensor--->int
-    return x_list, y_list
+        l_list.append(l.item()) # tensor--->int
+        error, _ = model_test_gpu(net, current_data, current_label)
+        e_list.append(error.item() ** 2)
+    return x_list, l_list, e_list
 
 def model_test_gpu(net, X, y,  device=None):
     """计算预测误差"""
-    print('test on: ', next(iter(net.parameters())).device)
+#    print('test on: ', next(iter(net.parameters())).device)
     if isinstance(net, nn.Module):
         net.eval() # 设置为评估模式
         if not device:
@@ -241,47 +240,36 @@ if __name__ == '__main__':
     batch_size = 400
     win_size = 5 # 5
     lr = 0.1 # 0.1
-    wd = 0.1
+    wd = 0.1 # 0.1
     num_epochs = 200
     dropout = 0 # 0
     gru_hidden = 128 # 128
     gru_layers = 2
 
     # 加载历史数据数据集
-    history_data_path = 'data\pensimdata_full_variable_50_batch_本科2.xlsx'
-    test_data_path = 'data\pensimdata_full_variable_50_batch_本科4.xlsx'
-#    select_channels = "D:I,K:N,P,Q"
-    select_channels = "B:N,P:Q"
-#    select_channels = "B:E,G,I:N,P:Q" #（改）
-#    select_channels = "B:N,P" #（改）
-    label = "产物浓度"
+    history_data_path = 'data\pensimdata_full_variable_50_batch_本科.xlsx'
+    test_data_path = 'data\pensimdata_full_variable_50_batch_本科2.xlsx'
+    select_channels = "B:E,G,I:N,P:Q" #（改, 产物浓度）
+#    select_channels = "B:E,G:H,J:N,P:Q" #（改, 菌体浓度）
+#    select_channels = "B:F,G,J:N,P:Q" #（改, 底物浓度）
+    label = "产物浓度" #（改, 产物浓度）
+#    label = "菌体浓度" # (改, 菌体浓度)
+#    label = "底物浓度" # (改, 底物浓度)
     hist_dataset = get_dataset(history_data_path, select_channels, label)
     test_dataset = get_dataset(test_data_path, select_channels, label)
-    curret_sample = test_dataset[4*400+197: 4*400+197+win_size]
-    min_batch = 1 # 5（改）
+    curret_sample = test_dataset[0*400+250: 0*400+250+win_size]
+    min_batch = 1 # 1（改）
     batch = len(hist_dataset) // batch_size * min_batch
 
     # 邻接矩阵
     mic_path = 'data\mic_result.xlsx'
-#    drop_label = ["曝气率", "搅拌速率", "底物流加温度", "溶解氧浓度", "产物浓度", "培养液体积", "PH值", "反应罐温度"]
-#    drop_label = ["底物浓度", "菌体浓度", "产物浓度"] #（改）
-#    drop_label = ["产物浓度", "冷水流速"] #（改）
-    drop_label = label
+    drop_label = ["底物浓度", "菌体浓度", "产物浓度"] #（改）   
     adjmatrix = get_adjmatrix(mic_path, drop_label)
     n_nodes = len(adjmatrix)
 
     # 损失图
     loss_fig, loss_axes = plt.subplots(1, 1, figsize=(6, 4))
     config_figure(loss_axes, 'epoch', 'loss', [1, num_epochs], [0, 1.5])
-#    _, axes = plt.subplots(1, 1, figsize=(6, 4))
-#    config_figure(axes, 'time', None, [win_size-1, batch_size-1], [-2.5, 2.5])
-    # 标准化
-#    data_mean = hist_dataset.mean(dim=0)
-#    data_std = hist_dataset.std(dim=0)
-#    hist_dataset = (hist_dataset - data_mean) / (data_std + 1e-5)
-#    test_dataset = (test_dataset - data_mean) / (data_std + 1e-5)
-#    curret_sample = (curret_sample - data_mean) / (data_std + 1e-5)
-#    print("当前归一化样本：", curret_sample)
     
     # 获取历史相似数据
     index_list, similar_data, similar_label = get_similar_data(hist_dataset, batch_size, win_size,curret_sample[:, 1:])
@@ -298,16 +286,20 @@ if __name__ == '__main__':
     similar_label_norm, similar_label_mean, similar_label_std = data_normal(similar_label)
     curret_data_norm = (curret_data - similar_data_mean) / similar_data_std
     curret_label_norm = (curret_label - similar_label_mean) / similar_label_std
-#    print("相似样本均值：", similar_data_mean)
-    print("标准化测试样本：", curret_label_norm[-1])
+    print("相似样本均值和标准差：", similar_data_mean, similar_data_std)
+    print("相似标签均值和标准差：", similar_label_mean, similar_label_std)
+    print("相似标签：", similar_label_norm[0: 100])
+    print("测试样本：", curret_label)
+    print("标准化测试样本：", curret_label_norm)
 
     # 模型
     new_net = GCNGRU(win_size, n_nodes, gru_hidden, 1, gru_layers, adjmatrix, dropout)
 
     # 训练
-    x_list, loss_list = model_train(new_net, similar_data_norm, similar_label_norm, lr, wd, num_epochs, 'cuda:0')
-    print("train loss: ", loss_list[-1])
-    loss_axes.plot(x_list, loss_list, label='loss')
+    x_list, loss_list, e_list = model_train(new_net, similar_data_norm, similar_label_norm, curret_data_norm, curret_label_norm[-1], lr, wd, num_epochs, 'cuda:0')
+    print("train loss: ", loss_list[-1], e_list[-1])
+    loss_axes.plot(x_list, loss_list, 'b-', label='train')
+    loss_axes.plot(x_list, e_list, 'r-', label='val')
 
     # 测试
     error, y_model = model_test_gpu(new_net, curret_data_norm, curret_label_norm[-1])
@@ -315,12 +307,4 @@ if __name__ == '__main__':
     print('prediction: ', y_model.cpu() * similar_label_std + similar_label_mean)
     print('error: ', error.cpu() * similar_label_std)
     loss_axes.legend()
-#    rmse, r2, y_real, y_pred = just_intime_learning(net, hist_dataset, test_dataset, batch_size, win_size, lr, num_epochs, per_batch, 'cuda:0')
-#    print('RMSE: ', rmse, 'R2: ', r2)
-#    print('real value: ', y_real)
-#    print('predict value: ', y_pred)
-#    x = np.arange(win_size - 1, batch_size)
-#    axes.plot(x, y_real.detach().numpy(), 'b-', label="real value")
-#    axes.plot(x, y_pred.detach().numpy(), 'r-', label='predict value')
-#    axes.legend()
     plt.show()
