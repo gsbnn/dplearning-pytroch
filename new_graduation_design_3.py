@@ -34,7 +34,7 @@ def get_distance(data, curret_sample):
     close_fn = torch.exp(-1* close_fn)
     close_fn = close_fn.sum(dim=1) / data.shape[1]
     distance = torch.sum(1 / (close_fn + 1e-5) -1, dim=0, keepdim=True)
-    return distance
+    return distance # tensor.size[1]
 
 def data_normal(data, dim=0, keepdim=False, bias=1e-6):
     """数据标准化"""
@@ -56,7 +56,7 @@ def get_similar_data(dataset, batch_size, win_size, curret_data):
         for win_data in create_data_win(data_norm, win_size):
             distance = get_distance(win_data, curret_data_norm)
             distance_list.append(distance)
-        distances = torch.cat(distance_list)
+        distances = torch.cat(distance_list) # tensor.Size[len(distance_list)]
         # 获取相似数据
         indexs = distances.argsort(dim=0)[0: min_batch] # 每个批次的最近似窗口数据
         index_min = indexs.min()
@@ -117,7 +117,7 @@ class GCNGRU(nn.Module):
         Y = Y.transpose(1, 2) # [batch_size, win_size, hidden_features]
         Y, _ = self.gru(Y, states)
         Y = Y.reshape((-1, Y.shape[-1]))  # [batch_size*win_size, hidden_features]
-        Y = self.fc(Y)
+        Y = self.fc(Y) # [batch_size*win_size, 1]
         return Y
     
     def init_states(self, device, batch_size):
@@ -202,8 +202,8 @@ def just_intime_learning(hist_dataset, test_dataset, batch_size,
         # 获取相似样本
         index_list, similar_data, similar_label = get_similar_data(hist_dataset, batch_size, win_size, data[:, 1:])
         # 数据标准化
-        test_data = data[:, 1:].t().unsqueeze(dim=0)
-        test_label = data[:, 0]
+        test_data = data[:, 1:].t().unsqueeze(dim=0) # tensor.Size([1, nodes, win_size])
+        test_label = data[:, 0] # tensor.Size([1])
         similar_data_norm, similar_data_mean, similar_data_std = data_normal(similar_data, (0, 2), True)
         similar_label_norm, similar_label_mean, similar_label_std = data_normal(similar_label)
         test_data_norm = (test_data - similar_data_mean) / similar_data_std
